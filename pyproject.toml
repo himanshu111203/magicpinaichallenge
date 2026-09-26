@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+filterwarnings = [
+    "ignore:Field name \"register\" in \"CategoryVoice\" shadows an attribute:UserWarning",
+    "ignore:.*Using `httpx` with `starlette.testclient`.*:DeprecationWarning",
+]

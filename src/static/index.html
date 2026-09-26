@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vera Message Engine</title>
+  <meta name="description" content="Autonomous zero-hallucination operational message composer for local merchant verticals.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="chat-app-container">
+    <!-- Header -->
+    <header class="chat-header">
+      <div class="header-left">
+        <div class="brand-icon">✨</div>
+        <div class="brand-text">
+          <h1 class="brand-title">Vera Message Engine</h1>
+          <p class="brand-tagline">Autonomous, zero-hallucination operational outreach engine</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnNewChat" class="btn-ghost" title="Start a fresh conversation">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+          </svg>
+          <span>New Chat</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Chat Thread -->
+    <main class="chat-thread" id="chatThread" aria-live="polite">
+      <!-- Welcome Message from Vera -->
+      <div class="msg-row bot" id="msg-welcome">
+        <div class="bubble-meta">
+          <div class="sender-info">
+            <span class="sender-name">Vera Engine</span>
+            <span class="bot-badge">AI</span>
+          </div>
+          <span class="msg-time" id="welcomeTime">Just now</span>
+        </div>
+        <div class="chat-bubble bot">
+          <div class="bubble-body">
+            Hello! I am Vera. I generate grounded, high-compulsion operational outreach messages tailored specifically to each business vertical.
+            <br><br>
+            Select an active merchant persona below, then type any operational scenario or choose a suggested prompt to compose a grounded message with zero hallucinations.
+          </div>
+          <div class="bubble-footer">
+            <div class="cta-indicator">
+              <span class="cta-label">Status:</span>
+              <span class="cta-badge">ready</span>
+            </div>
+            <button class="toggle-grounding-btn" data-target="grounding-welcome">
+              <span>Why this message?</span>
+              <svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+          </div>
+          <div class="grounding-panel" id="grounding-welcome">
+            <div class="grounding-header">
+              <span class="grounding-title">🛡️ Guardrails & Operational Directives</span>
+            </div>
+            <ul class="grounding-list">
+              <li>100% grounded in verified category digest, regulatory updates, and merchant context.</li>
+              <li>Strict safety guardrail: 0 URLs in all messages to prevent external link penalties.</li>
+              <li>Low-friction binary yes/no CTAs calibrated to maximize response compulsion.</li>
+              <li>Inbound turn engine handles commitment, WhatsApp auto-replies, and opt-outs.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Bottom Input & Suggestions Container -->
+    <footer class="chat-bottom-bar">
+      <!-- Active Merchant Persona Dropdown Selector -->
+      <div class="persona-selector-container">
+        <span class="persona-label">ACTIVE MERCHANT PERSONA</span>
+        <div class="persona-dropdown" id="personaDropdown">
+          <button type="button" class="persona-dropdown-btn" id="personaDropdownBtn" aria-haspopup="listbox" aria-expanded="false">
+            <span class="persona-current" id="personaCurrentText">Rohini Dental Studio (Dentist)</span>
+            <svg class="dropdown-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <ul class="persona-menu" id="personaMenu" role="listbox" aria-label="Active Merchant Persona">
+            <li class="persona-item active" role="option" data-category="dentists" aria-selected="true">
+              <span class="item-icon">🦷</span>
+              <div class="item-info">
+                <span class="item-name">Rohini Dental Studio <span class="item-tag">(Dentist)</span></span>
+                <span class="item-loc">Rohini, Delhi</span>
+              </div>
+            </li>
+            <li class="persona-item" role="option" data-category="salons" aria-selected="false">
+              <span class="item-icon">✂️</span>
+              <div class="item-info">
+                <span class="item-name">Chic Cuts Salon <span class="item-tag">(Salon)</span></span>
+                <span class="item-loc">Lajpat Nagar, Delhi</span>
+              </div>
+            </li>
+            <li class="persona-item" role="option" data-category="restaurants" aria-selected="false">
+              <span class="item-icon">🍽️</span>
+              <div class="item-info">
+                <span class="item-name">Delhi Darbar Dhaba <span class="item-tag">(Restaurant)</span></span>
+                <span class="item-loc">Karol Bagh, Delhi</span>
+              </div>
+            </li>
+            <li class="persona-item" role="option" data-category="gyms" aria-selected="false">
+              <span class="item-icon">🏋️</span>
+              <div class="item-info">
+                <span class="item-name">Iron Pulse Fitness <span class="item-tag">(Gym)</span></span>
+                <span class="item-loc">Dwarka, Delhi</span>
+              </div>
+            </li>
+            <li class="persona-item" role="option" data-category="pharmacies" aria-selected="false">
+              <span class="item-icon">💊</span>
+              <div class="item-info">
+                <span class="item-name">Metro Care Pharmacy <span class="item-tag">(Pharmacy)</span></span>
+                <span class="item-loc">Saket, Delhi</span>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Suggested Scenario Quick-Reply Chips -->
+      <div class="suggestions-container" id="suggestionsContainer">
+        <span class="suggestions-label">Suggested:</span>
+        <div class="suggestion-chips" id="suggestionChips">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </div>
+
+      <!-- Chat Input Form -->
+      <form class="chat-input-form" id="chatForm">
+        <div class="input-wrapper">
+          <textarea
+            id="chatInput"
+            class="chat-textarea"
+            placeholder="Describe an operational scenario or question..."
+            rows="1"
+            maxlength="800"
+            aria-label="Message prompt input"
+          ></textarea>
+          <button type="submit" id="btnSend" class="btn-send" aria-label="Send message">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </form>
+      <div class="chat-footer-note">
+        <span>Grounded in active vertical context • Zero hallucinations • URL-free outreach</span>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
