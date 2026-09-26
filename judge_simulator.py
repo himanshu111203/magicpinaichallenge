@@ -17,33 +17,21 @@ Author: magicpin AI Challenge Team
 """
 
 import os
-import sys
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=False)
 
-if sys.platform == "win32":
-    try:
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        if hasattr(sys.stderr, "reconfigure"):
-            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-
-# Override via JUDGE_BOT_URL, JUDGE_LLM_PROVIDER, JUDGE_LLM_API_KEY,
-# JUDGE_LLM_MODEL, JUDGE_OLLAMA_URL, and JUDGE_TEST_SCENARIO.
 # =============================================================================
 # ██████  CONFIGURATION - EDIT THIS SECTION ██████
 # =============================================================================
 
 # Your bot's URL (where your bot is running)
-BOT_URL = os.environ.get("JUDGE_BOT_URL", "http://localhost:8080")
+BOT_URL = "https://magicpinaichallenge.vercel.app/"
 
 # Choose your LLM provider: "openai", "anthropic", "gemini", "deepseek", "groq", "ollama", "openrouter"
-LLM_PROVIDER = os.environ.get("JUDGE_LLM_PROVIDER", "gemini")
+LLM_PROVIDER = "gemini"
 
+# Read API keys from .env or the process environment.
 LLM_API_KEY = (
     os.environ.get("JUDGE_LLM_API_KEY")
     or os.environ.get("GEMINI_API_KEY")
@@ -51,19 +39,20 @@ LLM_API_KEY = (
     or ""
 )
 
-# Model to use (leave empty for default, or specify like "gemini-1.5-flash", "gemini-2.0-flash", etc.)
+# Model to use (leave empty for default, or specify like "gpt-4o", "claude-3-5-sonnet-20241022", etc.)
 LLM_MODEL = os.environ.get("JUDGE_LLM_MODEL", "gemini-3.5-flash")
 
-# For Ollama only: local server URL
-OLLAMA_URL = os.environ.get("JUDGE_OLLAMA_URL", "http://localhost:11434")
+
 
 # Which test to run by default
-TEST_SCENARIO = os.environ.get("JUDGE_TEST_SCENARIO", "all")
+TEST_SCENARIO = "full_evaluation"  # Options: warmup, phase2_short, auto_reply_hell, intent_transition, hostile, all, full_evaluation
 
 # =============================================================================
 # ██████  END OF CONFIGURATION - DON'T EDIT BELOW THIS LINE ██████
 # =============================================================================
 
+import os
+import sys
 import json
 import time
 import re
@@ -122,11 +111,7 @@ def print_score_bar(dimension: str, score: int, max_score: int = 10):
     bar_filled = int((score / max_score) * 20)
     bar_empty = 20 - bar_filled
     color = Colors.GREEN if score >= 7 else Colors.YELLOW if score >= 4 else Colors.RED
-    try:
-        print(f"  {dimension:22} [{color}{'█' * bar_filled}{Colors.DIM}{'░' * bar_empty}{Colors.RESET}] {color}{score:2}/{max_score}{Colors.RESET}")
-    except (UnicodeEncodeError, UnicodeError):
-        print(f"  {dimension:22} [{color}{'#' * bar_filled}{Colors.DIM}{'-' * bar_empty}{Colors.RESET}] {color}{score:2}/{max_score}{Colors.RESET}")
-
+    print(f"  {dimension:22} [{color}{'█' * bar_filled}{Colors.DIM}{'░' * bar_empty}{Colors.RESET}] {color}{score:2}/{max_score}{Colors.RESET}")
 
 def print_reason(text: str):
     wrapped = text[:200] + "..." if len(text) > 200 else text
@@ -240,44 +225,16 @@ class GeminiProvider(LLMProvider):
 
     def complete(self, prompt: str, system: str = None) -> str:
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
-        gen_config = {"temperature": 0.2, "maxOutputTokens": 2048}
-        if system and "JSON" in system:
-            gen_config["responseMimeType"] = "application/json"
-
         body = json.dumps({
             "contents": [{"parts": [{"text": full_prompt}]}],
-            "generationConfig": gen_config
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1500}
         }).encode("utf-8")
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
-        last_err = None
-        for attempt in range(6):
-            try:
-                req = urlrequest.Request(url, data=body, headers={"Content-Type": "application/json"})
-                resp = urlrequest.urlopen(req, timeout=TIMEOUT_LLM)
-                data = json.loads(resp.read().decode("utf-8"))
-                return data["candidates"][0]["content"]["parts"][0]["text"]
-            except urlerror.HTTPError as e:
-                last_err = e
-                if e.code == 429:
-                    delay_s = 40
-                    try:
-                        err_json = json.loads(e.read().decode("utf-8"))
-                        for item in err_json.get("error", {}).get("details", []):
-                            if "retryDelay" in item:
-                                delay_s = int(float(str(item["retryDelay"]).rstrip("s"))) + 2
-                    except Exception:
-                        pass
-                    print_warn(f"Gemini quota rate limit hit. Waiting {delay_s}s for quota window to reset...")
-                    time.sleep(delay_s)
-                    continue
-                if attempt < 5:
-                    time.sleep(2 ** attempt)
-            except Exception as e:
-                last_err = e
-                if attempt < 5:
-                    time.sleep(2 ** attempt)
-        raise last_err
+        req = urlrequest.Request(url, data=body, headers={"Content-Type": "application/json"})
+        resp = urlrequest.urlopen(req, timeout=TIMEOUT_LLM)
+        data = json.loads(resp.read().decode("utf-8"))
+        return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
 class DeepSeekProvider(LLMProvider):
@@ -385,7 +342,6 @@ def create_provider() -> LLMProvider:
         "gemini": lambda: GeminiProvider(LLM_API_KEY, LLM_MODEL),
         "deepseek": lambda: DeepSeekProvider(LLM_API_KEY, LLM_MODEL),
         "groq": lambda: GroqProvider(LLM_API_KEY, LLM_MODEL),
-        "ollama": lambda: OllamaProvider(LLM_MODEL, OLLAMA_URL),
         "openrouter": lambda: OpenRouterProvider(LLM_API_KEY, LLM_MODEL),
     }
 
@@ -593,35 +549,26 @@ Score each dimension 0-10 with clear reasoning. Be STRICT."""
         """Parse LLM JSON response."""
         match = re.search(r'\{[\s\S]*\}', response)
         if not match:
-            print_warn(f"No JSON block in LLM response: {repr(response[:200])}")
             return self._fallback_score(action)
-
-        def _to_int(v, default=5):
-            if v is None:
-                return default
-            try:
-                return int(v)
-            except (ValueError, TypeError):
-                return default
 
         try:
             data = json.loads(match.group())
             result = ScoreResult(
-                specificity=min(10, max(0, _to_int(data.get("specificity"), 5))),
-                specificity_reason=str(data.get("specificity_reason") or ""),
-                category_fit=min(10, max(0, _to_int(data.get("category_fit"), 5))),
-                category_fit_reason=str(data.get("category_fit_reason") or ""),
-                merchant_fit=min(10, max(0, _to_int(data.get("merchant_fit"), 5))),
-                merchant_fit_reason=str(data.get("merchant_fit_reason") or ""),
-                decision_quality=min(10, max(0, _to_int(data.get("decision_quality", data.get("trigger_relevance")), 5))),
-                decision_quality_reason=str(data.get("decision_quality_reason", data.get("trigger_relevance_reason")) or ""),
-                engagement_compulsion=min(10, max(0, _to_int(data.get("engagement_compulsion"), 5))),
-                engagement_reason=str(data.get("engagement_reason") or ""),
-                hint=str(data.get("hint") or "")
+                specificity=min(10, max(0, int(data.get("specificity", 5)))),
+                specificity_reason=data.get("specificity_reason", ""),
+                category_fit=min(10, max(0, int(data.get("category_fit", 5)))),
+                category_fit_reason=data.get("category_fit_reason", ""),
+                merchant_fit=min(10, max(0, int(data.get("merchant_fit", 5)))),
+                merchant_fit_reason=data.get("merchant_fit_reason", ""),
+                decision_quality=min(10, max(0, int(data.get("decision_quality", data.get("trigger_relevance", 5))))),
+                decision_quality_reason=data.get("decision_quality_reason", data.get("trigger_relevance_reason", "")),
+                engagement_compulsion=min(10, max(0, int(data.get("engagement_compulsion", 5)))),
+                engagement_reason=data.get("engagement_reason", ""),
+                hint=data.get("hint", "")
             )
             return result
         except Exception as e:
-            print_warn(f"Parse error: {e}\nResponse was:\n{response}")
+            print_warn(f"Parse error: {e}")
             return self._fallback_score(action)
 
     def _fallback_score(self, action: Dict) -> ScoreResult:
@@ -1013,9 +960,8 @@ def main():
         sys.exit(1)
 
     # Run the judge
-    scenario = sys.argv[1] if len(sys.argv) > 1 else TEST_SCENARIO
     judge = JudgeSimulator(llm)
-    success = judge.run(scenario)
+    success = judge.run(TEST_SCENARIO)
 
     sys.exit(0 if success else 1)
 
