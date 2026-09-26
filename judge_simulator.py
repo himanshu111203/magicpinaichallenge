@@ -18,6 +18,9 @@ Author: magicpin AI Challenge Team
 
 import os
 import sys
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=False)
 
 if sys.platform == "win32":
     try:
@@ -29,27 +32,33 @@ if sys.platform == "win32":
         pass
 
 
+# Override via JUDGE_BOT_URL, JUDGE_LLM_PROVIDER, JUDGE_LLM_API_KEY,
+# JUDGE_LLM_MODEL, JUDGE_OLLAMA_URL, and JUDGE_TEST_SCENARIO.
 # =============================================================================
 # ██████  CONFIGURATION - EDIT THIS SECTION ██████
 # =============================================================================
 
 # Your bot's URL (where your bot is running)
-BOT_URL = os.getenv("BOT_URL", "http://localhost:8080")
+BOT_URL = os.environ.get("JUDGE_BOT_URL", "http://localhost:8080")
 
 # Choose your LLM provider: "openai", "anthropic", "gemini", "deepseek", "groq", "ollama", "openrouter"
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
+LLM_PROVIDER = os.environ.get("JUDGE_LLM_PROVIDER", "gemini")
 
-# Set GEMINI_API_KEY or GOOGLE_API_KEY in the environment.
-LLM_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+LLM_API_KEY = (
+    os.environ.get("JUDGE_LLM_API_KEY")
+    or os.environ.get("GEMINI_API_KEY")
+    or os.environ.get("GOOGLE_API_KEY")
+    or ""
+)
 
 # Model to use (leave empty for default, or specify like "gemini-1.5-flash", "gemini-2.0-flash", etc.)
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.5-flash")
+LLM_MODEL = os.environ.get("JUDGE_LLM_MODEL", "gemini-3.5-flash")
 
 # For Ollama only: local server URL
-OLLAMA_URL = "http://localhost:11434"
+OLLAMA_URL = os.environ.get("JUDGE_OLLAMA_URL", "http://localhost:11434")
 
 # Which test to run by default
-TEST_SCENARIO = os.getenv("TEST_SCENARIO", "all")
+TEST_SCENARIO = os.environ.get("JUDGE_TEST_SCENARIO", "all")
 
 # =============================================================================
 # ██████  END OF CONFIGURATION - DON'T EDIT BELOW THIS LINE ██████

@@ -86,6 +86,17 @@ python bot.py
 # or: uvicorn bot:app --host 0.0.0.0 --port 8080
 ```
 
+### Run the Judge Simulator
+```bash
+JUDGE_LLM_API_KEY="your-key-here" \
+JUDGE_LLM_PROVIDER="gemini" \
+JUDGE_BOT_URL="https://magicpinaichallenge.vercel.app" \
+python judge_simulator.py
+```
+
+Optional overrides: `JUDGE_LLM_MODEL`, `JUDGE_OLLAMA_URL`, and `JUDGE_TEST_SCENARIO`.
+The simulator loads a project-root `.env` when present; `JUDGE_LLM_API_KEY` takes precedence, with `GEMINI_API_KEY` and `GOOGLE_API_KEY` accepted as fallbacks.
+
 ### Run Full Test Suite (65 Tests)
 ```bash
 pytest -v
