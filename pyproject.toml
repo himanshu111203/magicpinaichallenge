@@ -15,3 +15,6 @@ filterwarnings = [
     "ignore:Field name \"register\" in \"CategoryVoice\" shadows an attribute:UserWarning",
     "ignore:.*Using `httpx` with `starlette.testclient`.*:DeprecationWarning",
 ]
+
+[tool.vercel]
+entrypoint = "src.main:app"
