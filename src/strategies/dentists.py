@@ -35,6 +35,16 @@ class DentistStrategy(BaseStrategy):
         locality = merchant.identity.locality
         owner = merchant.identity.owner_first_name or "Doctor"
 
+        if trigger.kind == "high_risk_adult_cohort":
+            offer = signals.active_offer_title
+            if offer:
+                return (
+                    f"Hi, this is {m_name} in {locality}. We are sharing our active {offer} offer. "
+                    "Would you like to schedule a cleaning appointment?",
+                    "binary_yes_no",
+                    "WhatsApp draft uses the active dental offer attached to the verified adult-cohort trigger.",
+                )
+
         # =========================================================================
         # 1. Customer-Facing Sends (On behalf of merchant)
         # =========================================================================

@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from src.main import app
 from src.services.context_store import context_store
+from src.services.conversation_store import conversation_store
+from src.services.chat_service import ChatService
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EXPANDED_DIR = BASE_DIR / "expanded"
@@ -12,10 +14,12 @@ EXPANDED_DIR = BASE_DIR / "expanded"
 
 @pytest.fixture(autouse=True)
 def clean_store():
-    """Ensure context store is clear before each test."""
+    """Ensure request-scoped context and conversation state is clear before each test."""
     context_store.clear()
+    conversation_store.clear()
     yield
     context_store.clear()
+    conversation_store.clear()
 
 
 @pytest.fixture
@@ -263,8 +267,13 @@ def test_chat_endpoint_grounded_and_clarify(client):
     assert data_inbound["action"] == "send"
 
 
-def test_chat_endpoint_differentiated_fallback_intents(client):
+def test_chat_endpoint_differentiated_fallback_intents(client, monkeypatch):
     """Verify that greeting, business growth, and medical queries receive distinct, appropriate responses."""
+    monkeypatch.setattr(
+        ChatService,
+        "_call_gemini_chat",
+        classmethod(lambda cls, *args, **kwargs: pytest.fail("deterministic intent called Gemini")),
+    )
     # A. Greeting / identity question
     resp_greeting = client.post("/v1/chat", json={
         "category": "pharmacies",
@@ -286,6 +295,7 @@ def test_chat_endpoint_differentiated_fallback_intents(client):
     assert data_growth["action"] == "bridge_growth"
     assert any(w in data_growth["body"].lower() for w in ["growth", "consulting", "telemetry", "operational"])
     assert "Metro Care Pharmacy" in data_growth["body"]
+    assert "chronic_refill_cohort:64" in data_growth["body"]
 
     # C. Out-of-scope clinical/medical question
     resp_medical = client.post("/v1/chat", json={
@@ -301,4 +311,39 @@ def test_chat_endpoint_differentiated_fallback_intents(client):
     assert data_greeting["body"] != data_growth["body"]
     assert data_greeting["body"] != data_medical["body"]
     assert data_growth["body"] != data_medical["body"]
+
+
+def test_dental_acceptance_composes_selected_context(client, monkeypatch):
+    """Acceptance must compose the selected dental signal and active offer, not a mock confirmation."""
+    monkeypatch.setattr(
+        ChatService,
+        "_call_gemini_chat",
+        classmethod(lambda cls, *args, **kwargs: pytest.fail("deterministic intent called Gemini")),
+    )
+    messages = (
+        "hi",
+        "how can I grow my clinic?",
+        "difference between paracetamol and dolo",
+        "ok convert",
+    )
+    responses = [
+        client.post("/v1/chat", json={
+            "category": "dentists",
+            "conversation_id": "conv_dental_grounded_acceptance",
+            "turn": turn,
+            "message": message,
+        }).json()
+        for turn, message in enumerate(messages, start=1)
+    ]
+
+    final = responses[-1]
+    assert final["action"] == "send"
+    assert final["cta"] == "binary_yes_no"
+    assert "Rohini Dental Studio" in final["body"]
+    assert "Rohini" in final["body"]
+    assert "Dental Cleaning @ ₹299" in final["body"]
+    assert "schedule a cleaning appointment" in final["body"]
+    assert "google" not in final["body"].lower()
+    assert "quality services" not in final["body"].lower()
+    assert "verified appointments" not in final["body"].lower()
 

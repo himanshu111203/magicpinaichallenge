@@ -36,13 +36,11 @@ def test_reply_auto_reply_pattern_detected():
     assert "auto-reply" in res["rationale"].lower() or "canned" in res["rationale"].lower()
 
 
-def test_reply_intent_transition_switches_to_action_mode():
+def test_reply_acceptance_without_context_does_not_fabricate_action():
     """
     CRITICAL INTENT TEST (simulating judge simulator _intent check):
     When merchant commits ('Ok lets do it. Whats next?'):
-    1. Must return action: 'send'
-    2. Must contain action words: 'done', 'sending', 'draft', 'here', 'confirm', 'proceed', 'next'
-    3. Must NOT contain qualifying words: 'would you', 'do you', 'can you tell', 'what if', 'how about'
+    Acceptance without a selected trigger must pause instead of inventing a draft.
     """
     commitment = "Ok lets do it. Whats next?"
     res = ReplyHandler.handle_reply(
@@ -55,14 +53,10 @@ def test_reply_intent_transition_switches_to_action_mode():
         turn_number=2,
     )
 
-    assert res["action"] == "send"
+    assert res["action"] == "wait"
     body = res["body"].lower()
-
-    actioning = ["done", "sending", "draft", "here", "confirm", "proceed", "next"]
-    qualifying = ["would you", "do you", "can you tell", "what if", "how about"]
-
-    assert any(w in body for w in actioning), f"Expected action words in body: {body}"
-    assert not any(w in body for w in qualifying), f"Qualifying words forbidden in action mode: {body}"
+    assert "verified outreach trigger" in body
+    assert "google" not in body
 
 
 def test_reply_hostile_message_ends_cleanly():
@@ -109,5 +103,6 @@ def test_api_reply_endpoint_integration(client):
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["action"] == "send"
-    assert "draft" in data["body"].lower() or "done" in data["body"].lower()
+    assert data["action"] == "wait"
+    assert "verified outreach trigger" in data["body"].lower()
+    assert "google" not in data["body"].lower()

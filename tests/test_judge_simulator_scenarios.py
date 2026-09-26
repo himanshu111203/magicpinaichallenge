@@ -84,9 +84,7 @@ def test_judge_simulator_scenario_auto_reply(client):
 
 def test_judge_simulator_scenario_intent(client):
     """
-    Direct replication of judge_simulator.py's _intent() scenario:
-    Sends commitment 'Ok lets do it. Whats next?'
-    Checks that bot switches to ACTION mode and uses actioning words without qualifying words.
+    An acceptance without a stored trigger must not generate an ungrounded action message.
     """
     commitment = "Ok lets do it. Whats next?"
     resp = client.post("/v1/reply", json={
@@ -99,14 +97,9 @@ def test_judge_simulator_scenario_intent(client):
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["action"] == "send"
-
-    body_lower = data.get("body", "").lower()
-    qualifying = ["would you", "do you", "can you tell", "what if", "how about"]
-    actioning = ["done", "sending", "draft", "here", "confirm", "proceed", "next"]
-
-    assert any(w in body_lower for w in actioning), "Bot must include action-oriented language"
-    assert not any(w in body_lower for w in qualifying), "Bot must NOT include qualifying language after commitment"
+    assert data["action"] == "wait"
+    assert "verified outreach trigger" in data["body"].lower()
+    assert "google" not in data["body"].lower()
 
 
 def test_judge_simulator_scenario_hostile(client):

@@ -210,10 +210,12 @@ class SuppressionEngine:
                     customer_id=trigger.customer_id,
                     trigger_id=trigger.id,
                     suppression_key=trigger.suppression_key,
+                    pending_trigger=trigger,
                     initial_turn=turn,
                 )
             else:
                 conv.add_turn(turn)
+                conv.pending_trigger = trigger
 
     def is_key_suppressed(self, suppression_key: str) -> bool:
         """Check if a suppression key is currently active."""

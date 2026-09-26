@@ -6,6 +6,8 @@ import re
 import threading
 from typing import Optional
 
+from src.models import TriggerContext
+
 
 def normalize_text(text: str) -> str:
     """Normalize text for verbatim comparison (lowercased, stripped, collapsed whitespace)."""
@@ -32,6 +34,7 @@ class ConversationRecord:
     customer_id: Optional[str] = None
     trigger_id: Optional[str] = None
     suppression_key: Optional[str] = None
+    pending_trigger: Optional[TriggerContext] = None
     status: str = "active"  # "active" | "waiting" | "ended"
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_turn_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -66,6 +69,7 @@ class ConversationStore:
         customer_id: Optional[str] = None,
         trigger_id: Optional[str] = None,
         suppression_key: Optional[str] = None,
+        pending_trigger: Optional[TriggerContext] = None,
         initial_turn: Optional[TurnRecord] = None,
     ) -> ConversationRecord:
         """Create and track a new conversation."""
@@ -76,11 +80,23 @@ class ConversationStore:
                 customer_id=customer_id,
                 trigger_id=trigger_id,
                 suppression_key=suppression_key,
+                pending_trigger=pending_trigger,
             )
             if initial_turn:
                 record.add_turn(initial_turn)
             self._conversations[conversation_id] = record
             return record
+
+    def set_pending_trigger(self, conversation_id: str, merchant_id: str, trigger: TriggerContext) -> None:
+        """Store the exact grounded trigger offered in a conversation for a later acceptance."""
+        with self._lock:
+            record = self._conversations.get(conversation_id)
+            if record is None:
+                record = ConversationRecord(conversation_id=conversation_id, merchant_id=merchant_id)
+                self._conversations[conversation_id] = record
+            record.pending_trigger = trigger
+            record.trigger_id = trigger.id
+            record.suppression_key = trigger.suppression_key
 
     def get(self, conversation_id: str) -> Optional[ConversationRecord]:
         """Retrieve conversation by ID."""

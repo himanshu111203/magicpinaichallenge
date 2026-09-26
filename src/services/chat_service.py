@@ -15,6 +15,7 @@ from src.models import (
     TriggerContext,
 )
 from src.services.context_store import context_store
+from src.services.conversation_store import conversation_store
 
 DATASET_DIR = Path(__file__).resolve().parent.parent.parent / "dataset"
 
@@ -340,6 +341,133 @@ Respond ONLY with valid JSON in this exact structure:
 
         return None
 
+    @staticmethod
+    def _classify_fallback_intent(text: str) -> Optional[str]:
+        operational_compliance = any(
+            re.search(pattern, text)
+            for pattern in (r"\bdci\b", r"\bradiograph\b", r"\bx[- ]?ray\b", r"\bcompliance\b", r"\bregulation\b")
+        )
+        explicit_medical_subject = any(
+            re.search(pattern, text)
+            for pattern in (
+                r"\b(paracetamol|dolo|crocin|ibuprofen|aspirin|antibiotics?|medicine|drug|tablet)\b",
+                r"\b(symptoms?|fever|headache|side\s*effects?|illness|disease|diagnosis)\b",
+            )
+        )
+        if operational_compliance and not explicit_medical_subject:
+            return None
+
+        clinical_patterns = (
+            r"\b(paracetamol|dolo|crocin|ibuprofen|aspirin|antibiotics?)\b",
+            r"\b(dosage|dose|side\s*effects?|symptoms?|fever|headache|pain\s*killer|treatment|diagnosis|prescription)\b",
+            r"\b(medicine|drug|tablet)\b.*\b(for|vs|versus|difference|better|safe|take)\b",
+            r"\b(difference\s+between|which\s+is\s+better|how\s+many\s+mg)\b.*\b(medicine|drug|tablet|dose|paracetamol|dolo)\b",
+        )
+        if any(re.search(pattern, text) for pattern in clinical_patterns):
+            return "medical"
+
+        growth_patterns = (
+            r"\b(grow|scale|expand|boost|improve|market|promote)\b",
+            r"\b(increase|more)\s+(sales|revenue|profit|footfall|business|customers|clients|orders|patients)\b",
+            r"\b(business\s+advice|marketing\s+tips|growth\s+strategy)\b",
+        )
+        if any(re.search(pattern, text) for pattern in growth_patterns):
+            return "growth"
+
+        greeting_patterns = (
+            r"\b(hi|hello|hey|namaste)\b",
+            r"\bgood\s+(morning|afternoon|evening)\b",
+            r"\b(who\s+are\s+you|what\s+are\s+you|who\s+is\s+vera|what\s+do\s+you\s+do|about\s+yourself)\b",
+            r"\bare\s+you\s+(from|a|the)\b",
+            r"\bhelp\s+me\b",
+        )
+        if any(re.search(pattern, text) for pattern in greeting_patterns):
+            return "greeting"
+        return None
+
+    @staticmethod
+    def _verified_context_summary(merchant: MerchantContext) -> str:
+        items = [f"signal {signal}" for signal in merchant.signals if isinstance(signal, str) and signal.strip()]
+        items.extend(
+            f"active offer {offer.title}"
+            for offer in merchant.offers
+            if offer.status == "active" and offer.title
+        )
+        return "; ".join(items)
+
+    @staticmethod
+    def _active_context_trigger(category_slug: str, merchant: MerchantContext) -> Optional[TriggerContext]:
+        if category_slug != "dentists" or "high_risk_adult_cohort" not in merchant.signals:
+            return None
+        cohort_count = merchant.customer_aggregate.high_risk_adult_count
+        active_offer = next((offer for offer in merchant.offers if offer.status == "active"), None)
+        if cohort_count is None or active_offer is None:
+            return None
+        return TriggerContext(
+            id=f"chat_{merchant.merchant_id}_high_risk_adult_cohort",
+            scope="customer",
+            kind="high_risk_adult_cohort",
+            source="internal",
+            merchant_id=merchant.merchant_id,
+            payload={"cohort_count": cohort_count, "offer_id": active_offer.id, "offer_title": active_offer.title},
+            urgency=2,
+            suppression_key=f"chat:high_risk_adult_cohort:{merchant.merchant_id}",
+            expires_at="2026-12-31T23:59:59Z",
+        )
+
+    @classmethod
+    def _intent_response(
+        cls,
+        intent: str,
+        merchant: MerchantContext,
+        category: CategoryContext,
+        trigger: Optional[TriggerContext] = None,
+    ) -> dict[str, Any]:
+        merchant_name = merchant.identity.name
+        locality = merchant.identity.locality or merchant.identity.city
+        context = cls._verified_context_summary(merchant)
+        context_text = context or "no current verified signals or active offers are available"
+
+        if intent == "medical":
+            body = (
+                "I can't provide medical or clinical advice or compare medicines. Please consult a "
+                f"licensed healthcare professional. Vera handles operational outreach for {merchant_name}; "
+                f"the current verified context is {context_text}."
+            )
+            action, cta = "decline_medical", "clarify"
+        elif intent == "growth":
+            selected_context = context
+            if trigger:
+                selected_context = (
+                    f"signal {trigger.kind}; active offer {trigger.payload.get('offer_title')}"
+                )
+            body = (
+                "I don't provide general business growth consulting. I can help turn a real current "
+                f"signal into operational outreach for {merchant_name}: {selected_context or context_text}. "
+                "Would you like a WhatsApp draft based on that context?"
+            )
+            action, cta = "bridge_growth", "binary_yes_no"
+        else:
+            body = (
+                f"Hello, I'm Vera, the operational outreach assistant for {merchant_name} in {locality}. "
+                f"I can prepare a grounded WhatsApp draft using this current context: {context_text}. "
+                "Which signal or active offer should I use?"
+            )
+            action, cta = "greet", "ready"
+
+        return {
+            "body": body,
+            "cta": cta,
+            "send_as": "vera",
+            "action": action,
+            "grounding": [
+                "Intent classified deterministically before optional LLM handling.",
+                f"Active Merchant: {merchant_name} ({locality})",
+                f"Verified context: {context_text}",
+            ],
+            "category": category.slug,
+        }
+
     @classmethod
     def process(
         cls,
@@ -375,6 +503,7 @@ Respond ONLY with valid JSON in this exact structure:
         is_inbound_turn = any(re.search(pat, msg_lower) for pat in all_inbound_patterns)
 
         if is_inbound_turn:
+            conversation = conversation_store.get(conversation_id)
             reply_res = ReplyHandler.handle_reply(
                 conversation_id=conversation_id,
                 merchant_id=mer_ctx.merchant_id,
@@ -383,6 +512,10 @@ Respond ONLY with valid JSON in this exact structure:
                 message=message,
                 received_at=datetime.now(timezone.utc).isoformat(),
                 turn_number=turn,
+                category_context=cat_ctx,
+                merchant_context=mer_ctx,
+                customer_context=cust_ctx,
+                trigger_context=conversation.pending_trigger if conversation else None,
             )
             grounding_points = [
                 f"Handled via Inbound Conversation Engine for {mer_ctx.identity.name}",
@@ -392,10 +525,10 @@ Respond ONLY with valid JSON in this exact structure:
             if reply_res.get("action") == "end":
                 grounding_points.append("Opt-out / loop absorption active: outreach terminated cleanly.")
             elif reply_res.get("action") == "send":
-                grounding_points.append("Action mode active: pre-drafted confirmation with zero qualifying friction.")
+                grounding_points.append("Action mode active: response composed from the conversation's selected context.")
 
             return {
-                "body": reply_res.get("body", "Confirmed. Proceeding to action."),
+                "body": reply_res.get("body", ""),
                 "cta": reply_res.get("cta", "none"),
                 "send_as": "vera",
                 "action": reply_res.get("action", "send"),
@@ -403,12 +536,21 @@ Respond ONLY with valid JSON in this exact structure:
                 "category": cat_slug,
             }
 
+        # Deterministic intents take precedence over trigger keyword matching and optional LLM handling.
+        intent = cls._classify_fallback_intent(msg_lower)
+        if intent:
+            active_trigger = cls._active_context_trigger(cat_slug, mer_ctx) if intent == "growth" else None
+            if active_trigger:
+                conversation_store.set_pending_trigger(conversation_id, mer_ctx.merchant_id, active_trigger)
+            return cls._intent_response(intent, mer_ctx, cat_ctx, active_trigger)
+
         # =========================================================================
         # 2. Scenario / Trigger Composition Request
         # =========================================================================
         trigger = cls._match_or_build_trigger(cat_slug, mer_ctx, msg_lower)
 
         if trigger is not None:
+            conversation_store.set_pending_trigger(conversation_id, mer_ctx.merchant_id, trigger)
             # Run real pure compose() function
             composed = compose(
                 category=cat_ctx,
@@ -447,143 +589,31 @@ Respond ONLY with valid JSON in this exact structure:
                 "category": cat_slug,
             }
 
-        # =========================================================================
-        # 3. Dynamic Gemini API Response for Conversational / Freeform / Typos
-        # =========================================================================
+        # Gemini handles only unmatched freeform queries; failures fall through below.
         gemini_result = cls._call_gemini_chat(message, mer_ctx, cat_ctx, cust_ctx)
         if gemini_result and gemini_result.get("body"):
             return gemini_result
 
-        # =========================================================================
-        # 4. Multi-Tier Grounded Fallback (Safety net if offline or rate-limited)
-        # =========================================================================
         merchant_name = mer_ctx.identity.name
         locality = mer_ctx.identity.locality or mer_ctx.identity.city
-
-        # A. Out-of-Scope Clinical / Medical / Pharmaceutical Inquiries
-        clinical_patterns = [
-            r"\bparacetamol\b", r"\bdolo\b", r"\bcrocin\b", r"\bibuprofen\b",
-            r"\baspirin\b", r"\bantibiotics?\b", r"\bdosage\b", r"\bdose\b",
-            r"\bside\s*effects?\b", r"\bsymptoms?\b", r"\bfever\b", r"\bheadache\b",
-            r"\bpain\s*killer\b", r"\bcure\b", r"\btreatment\b", r"\bmedicine\s+for\b",
-            r"\bdrug\s+for\b", r"\billness\b", r"\bdisease\b", r"\bdiagnosis\b",
-            r"\bdifference\s+between\b", r"\bwhich\s+is\s+better\b", r"\bwhich\s+tablet\b",
-            r"\bhow\s+many\s+mg\b", r"\bis\s+it\s+safe\s+to\b", r"\bprescription\s+for\b",
-        ]
-        if any(re.search(pat, msg_lower) for pat in clinical_patterns):
-            body = (
-                f"I do not provide medical, clinical, or diagnostic advice. As Vera, I assist "
-                f"{merchant_name} strictly with operational outreach (such as prescription refill "
-                f"reminders, stock availability notices, and delivery confirmations). For medical questions "
-                f"or drug comparisons, please consult a licensed healthcare professional or pharmacist directly. "
-                f"Would you like me to draft an operational outreach message for {merchant_name} instead?"
-            )
-            return {
-                "body": body,
-                "cta": "clarify",
-                "send_as": "vera",
-                "action": "decline_medical",
-                "grounding": [
-                    "Engine: Deterministic Grounded Safety Layer",
-                    "Medical Safety Guardrail: Clinical inquiry declined; AI does not dispense medical advice.",
-                    f"Active Merchant: {merchant_name} ({locality}, Delhi)",
-                    f"Permitted Scope: Operational message drafting for {cat_ctx.display_name}.",
-                ],
-                "category": cat_slug,
-            }
-
-        # B. General Business Advice / Growth Consulting Inquiries (with typo resilience)
-        growth_patterns = [
-            r"\bgrow\b", r"\bscale\b", r"\bexpand\b", r"\bboost\b",
-            r"\bincrease\s+(sales|revenue|profit|footfall|business|buisnees|bussiness|customers|clients|orders)\b",
-            r"\bmore\s+(customers|patients|clients|footfall|sales)\b",
-            r"\b(expand|grow|market|promote|improve|scale)\s+(my\s+)?(shop|store|business|buisnees|bussiness|clinic|salon|gym|pharmacy|practice|sales|revenue|footfall)\b",
-            r"\bbusiness\s+advice\b", r"\bmarketing\s+tips\b", r"\bgrowth\s+strategy\b",
-            r"\bhow\s+(can|do|to|i)\s+(grow|market|promote|improve|scale|expand)\b",
-            r"\bexpand\s+(my\s+)?(business|buisnees|bussiness|shop|store|clinic)\b",
-            r"\bhow\s+i\s+expand\b",
-        ]
-        if any(re.search(pat, msg_lower) for pat in growth_patterns):
-            growth_bridges = {
-                "pharmacies": "1) reminding the 64 chronic therapy patients due for their 25-day prescription refill, or 2) announcing your active Free Home Delivery (orders > ₹499) to Saket residents",
-                "dentists": "1) re-engaging 78 lapsed patients due for 6-month cleaning checkups (@ ₹299), or 2) updating patients on the DCI radiograph dose compliance deadline (Dec 15) to reactivate 22 days of dormant profile activity",
-                "salons": "1) capturing the +42% Diwali festive booking surge with your active 'Balayage & Hair Spa @ ₹1,999' offer, or 2) following up with bridal makeup trial clients (like Kavya) before peak wedding dates",
-                "restaurants": "1) capitalizing on your +18% profile view surge by spotlighting your 'Chicken Dum Biryani @ ₹199' offer, or 2) reassuring weekend diners with an FSSAI kitchen hygiene compliance update",
-                "gyms": "1) re-activating 38 members reaching their 30-day inactivity mark with a complimentary body composition scan, or 2) promoting your '3 FREE Trial Classes' to new local Dwarka leads",
-            }
-            bridge_text = growth_bridges.get(cat_slug, f"drafting grounded outreach from {merchant_name}'s active profile signals")
-            body = (
-                f"I cannot provide general business growth consulting, but based on {merchant_name}'s "
-                f"current operational telemetry, I can draft high-impact outreach around verified opportunities: "
-                f"{bridge_text}. Would you like me to draft an outreach message for one of these?"
-            )
-            return {
-                "body": body,
-                "cta": "binary_yes_no",
-                "send_as": "vera",
-                "action": "bridge_growth",
-                "grounding": [
-                    "Engine: Deterministic Grounded Safety Layer",
-                    f"Scope Boundary: General consulting declined; bridged to real {cat_ctx.display_name} telemetry.",
-                    f"Active Merchant: {merchant_name} ({locality}, Delhi)",
-                    f"Available Signals: {', '.join(mer_ctx.signals)}",
-                ],
-                "category": cat_slug,
-            }
-
-        # C. Greeting / Identity Inquiries
-        greeting_patterns = [
-            r"\bhi\b", r"\bhello\b", r"\bhey\b", r"\bnamaste\b",
-            r"\bgood\s+(morning|afternoon|evening)\b",
-            r"\bwho\s+are\s+you\b", r"\bwhat\s+are\s+you\b", r"\bwho\s+is\s+vera\b",
-            r"\bare\s+you\s+(from|a|the)\b", r"\bwhat\s+do\s+you\s+do\b",
-            r"\babout\s+yourself\b", r"\bhelp\s+me\b",
-        ]
-        if any(re.search(pat, msg_lower) for pat in greeting_patterns):
-            body = (
-                f"Hello! I am Vera, an autonomous operational outreach engine for {merchant_name} "
-                f"({locality}, Delhi). I convert verified business milestones, regulatory updates, "
-                f"and customer cycles into high-compulsion WhatsApp outreach messages. To compose a grounded message, "
-                f"you can describe an operational scenario or choose one of the suggested prompts below."
-            )
-            return {
-                "body": body,
-                "cta": "ready",
-                "send_as": "vera",
-                "action": "greet",
-                "grounding": [
-                    f"Conversational Greeting: Introduced Vera for {merchant_name}.",
-                    f"Vertical Context: {cat_ctx.display_name} ({locality}, Delhi)",
-                    "Ready to compose grounded outreach messages without hallucinations.",
-                ],
-                "category": cat_slug,
-            }
-
-        # D. Unmatched Operational Query Fallback (Grounded in active persona records)
-        fallback_scenarios = {
-            "pharmacies": "1) the 25-day chronic medication refill cycle (64 cohort patients due), or 2) a voluntary drug recall alert batch notification",
-            "dentists": "1) the DCI revised radiograph dose compliance update (due Dec 15; addresses 22-day profile dormancy), or 2) a 6-month patient recall cleaning for Priya (@ ₹299)",
-            "salons": "1) the Diwali festive booking surge (+42% demand) with your active 'Balayage & Hair Spa @ ₹1,999' offer, or 2) bridal package trial followup for Kavya",
-            "restaurants": "1) the FSSAI revised kitchen hygiene guidelines, or 2) spotlighting your 'Chicken Dum Biryani @ ₹199' offer following an 18% view surge",
-            "gyms": "1) the 30-day member inactivity recall for 38 lapsed members, or 2) a complimentary body composition scan campaign",
-        }
-        scenarios_text = fallback_scenarios.get(cat_slug, "a verified regulatory update or customer recall event")
-        body = (
-            f"I couldn't identify a verified business or customer event in your message for {merchant_name}. "
-            f"As Vera, I am calibrated specifically for operational outreach in the {cat_ctx.display_name} vertical. "
-            f"Based on {merchant_name}'s current records, I can draft outreach for: {scenarios_text}. "
-            f"Which would you like to prepare?"
-        )
+        context = cls._verified_context_summary(mer_ctx)
+        query_excerpt = re.sub(r"\s+", " ", message).strip()[:120]
+        context_text = context or "no current verified signal or active offer is available"
         return {
-            "body": body,
+            "body": (
+                f"I couldn't match '{query_excerpt}' to an operational trigger for {merchant_name}. "
+                f"Vera drafts outreach only from current verified context: {context_text}. "
+                "Please name the signal or offer you want to use."
+            ),
             "cta": "clarify",
             "send_as": "vera",
             "action": "clarify",
             "grounding": [
-                "Zero-hallucination safeguard: ungrounded query rejected without fabricating specifics.",
-                f"Active Merchant Persona: {merchant_name} ({locality}, Delhi)",
-                f"Active Vertical Context: {cat_ctx.display_name}",
+                "No matching operational trigger found; no unverified scenario was suggested.",
+                f"Active Merchant Persona: {merchant_name} ({locality})",
+                f"Verified context: {context_text}",
             ],
+            "category": cat_slug,
         }
 
     @classmethod

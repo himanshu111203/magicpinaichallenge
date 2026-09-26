@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from src.models import MerchantContext
+from src.engine.composer import compose
+from src.models import CategoryContext, CustomerContext, MerchantContext, TriggerContext
 from src.services.context_store import context_store
 from src.services.conversation_store import TurnRecord, conversation_store
 
@@ -73,6 +74,10 @@ class ReplyHandler:
         message: str,
         received_at: str,
         turn_number: int,
+        category_context: Optional[CategoryContext] = None,
+        merchant_context: Optional[MerchantContext] = None,
+        customer_context: Optional[CustomerContext] = None,
+        trigger_context: Optional[TriggerContext] = None,
     ) -> dict[str, Any]:
         """
         Process inbound reply and return wire-compliant response:
@@ -99,12 +104,19 @@ class ReplyHandler:
             turn_number=turn_number,
         ))
 
+        trigger_context = trigger_context or conv.pending_trigger
+        merchant_context = merchant_context or (
+            context_store.get_model("merchant", merchant_id) if merchant_id else None
+        )
+        if category_context is None and merchant_context:
+            category_context = context_store.get_model("category", merchant_context.category_slug)
+        if customer_context is None and trigger_context and trigger_context.customer_id:
+            customer_context = context_store.get_model("customer", trigger_context.customer_id)
+
         # Look up merchant name for grounding
         merchant_name = "your business"
-        if merchant_id:
-            m_ctx = context_store.get_model("merchant", merchant_id)
-            if isinstance(m_ctx, MerchantContext):
-                merchant_name = m_ctx.identity.name
+        if isinstance(merchant_context, MerchantContext):
+            merchant_name = merchant_context.identity.name
 
         # =========================================================================
         # 1. Hostile / Opt-out Detection (Phase 12)
@@ -114,6 +126,8 @@ class ReplyHandler:
                 conversation_store.end_conversation(conversation_id)
                 return {
                     "action": "end",
+                    "body": "Understood. I will stop outreach as requested.",
+                    "cta": "none",
                     "rationale": "Merchant requested to stop outreach or expressed dissatisfaction; conversation ended immediately to honor preference.",
                 }
 
@@ -128,12 +142,16 @@ class ReplyHandler:
                 conversation_store.end_conversation(conversation_id)
                 return {
                     "action": "end",
+                    "body": "Automated reply detected; no campaign message was sent.",
+                    "cta": "none",
                     "rationale": "WhatsApp Business canned auto-reply greeting detected; ending conversation cleanly per protocol.",
                 }
             else:
                 conversation_store.end_conversation(conversation_id)
                 return {
                     "action": "end",
+                    "body": "Automated reply detected; no campaign message was sent.",
+                    "cta": "none",
                     "rationale": "Repeated WhatsApp Business canned auto-reply detected; ending conversation.",
                 }
 
@@ -145,6 +163,8 @@ class ReplyHandler:
                 return {
                     "action": "wait",
                     "wait_seconds": 3600,
+                    "body": "Understood. I will pause outreach as requested.",
+                    "cta": "none",
                     "rationale": "Merchant asked to reconnect later; set wait state for 1 hour.",
                 }
 
@@ -155,12 +175,22 @@ class ReplyHandler:
         # =========================================================================
         is_commitment = any(re.search(pat, msg_lower) for pat in cls.COMMITMENT_PATTERNS)
         if is_commitment:
-            body = (
-                f"Done! Confirming your request for {merchant_name}. "
-                f"Here is your draft Google update ready to publish: "
-                f"\"Visit {merchant_name} for quality services and verified appointments.\" "
-                f"Proceeding with deployment now — sending next confirmation shortly!"
+            if not all((category_context, merchant_context, trigger_context)):
+                return {
+                    "action": "wait",
+                    "wait_seconds": 0,
+                    "body": "I don't have a verified outreach trigger selected in this conversation, so I haven't drafted or sent a message. Please select a current signal or active offer first.",
+                    "cta": "clarify",
+                    "rationale": "Acceptance received without the context required to compose grounded outreach; no message was fabricated or sent.",
+                }
+
+            composed = compose(
+                category=category_context,
+                merchant=merchant_context,
+                trigger=trigger_context,
+                customer=customer_context if trigger_context.scope == "customer" else None,
             )
+            body = composed["body"]
             # Record turn in conversation store
             conv.add_turn(TurnRecord(
                 from_role="vera",
@@ -171,27 +201,17 @@ class ReplyHandler:
             return {
                 "action": "send",
                 "body": body,
-                "cta": "none",
-                "rationale": "Merchant committed to action; immediately switched to action mode with draft confirmation and zero qualifying friction.",
+                "cta": composed["cta"],
+                "rationale": f"Accepted the selected {trigger_context.kind} trigger and composed outreach from current merchant, category, and trigger context.",
             }
 
         # =========================================================================
-        # 5. General / Informational Response (Action-oriented, no qualifying traps)
+        # 5. Unmatched Reply (do not imply that an unrequested action was taken)
         # =========================================================================
-        body = (
-            f"Done! Here is the latest update for {merchant_name}. "
-            f"Vera has prepared your weekly discovery draft. "
-            f"Confirming next steps now!"
-        )
-        conv.add_turn(TurnRecord(
-            from_role="vera",
-            body=body,
-            ts=received_at,
-            turn_number=turn_number + 1,
-        ))
         return {
-            "action": "send",
-            "body": body,
-            "cta": "binary_yes_no",
-            "rationale": "Action-oriented response maintaining conversation momentum.",
+            "action": "wait",
+            "wait_seconds": 0,
+            "body": "I couldn't match that reply to a current outreach action, so I haven't drafted or sent anything.",
+            "cta": "clarify",
+            "rationale": "Reply did not match an opt-out, deferral, auto-reply, or commitment action.",
         }
